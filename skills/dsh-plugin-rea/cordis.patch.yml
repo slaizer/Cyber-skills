@@ -1,0 +1,64 @@
+# dsh-plugin-rea — one-plugin bundle
+#
+# Registers the REA MCP server as mcp__rea__* and launches it through the
+# bundle's own shim, which reads the machine-local state written by
+# `scripts/setup.mjs` and exports exactly the variables REA reads.
+#
+# PORTABLE BY CONSTRUCTION — no machine path appears in this file.
+#   * `command` is the running Node executable (`process.execPath`), so the
+#     launcher needs no PATH entry and no shim resolution by the OS.
+#   * `args[0]` is computed at boot from DSH_HOME, where setup mirrors the shim.
+#   * FORWARD SLASHES ONLY in the JS string literals below. A single-quoted YAML
+#     scalar keeps backslashes literal, and JavaScript then eats them: '\plugins'
+#     is not "\plugins" but the BEL control character, '\rea-bundle' becomes a
+#     carriage return and '\bin' a backspace, so the path is silently destroyed.
+#     Forward slashes are accepted on Windows and are correct on POSIX, so one
+#     expression serves every platform.
+#   * `path`/`require` are not in scope for a `!!js` expression (`ctx` is the
+#     loader scope), hence plain string concatenation.
+#   * No DSH_HOME (undefined/absent/empty) falls back to the SAME rule the shim
+#     and setup.mjs use — `<home>/.dsh` — never to the bare home directory.
+#     Getting this wrong is silent: setup would mirror the shim into
+#     `<home>/.dsh/plugins/rea-bundle/bin/` while the row looked for it one level
+#     up, so the row could never start on a machine that merely happened to have
+#     DSH_HOME unset.
+#   * The home fallback mirrors Node's own `os.homedir()`: USERPROFILE, then
+#     HOMEDRIVE+HOMEPATH (the shape a service account gets), then HOME. An
+#     expression that checked only USERPROFILE and HOME produced `/.dsh/...` —
+#     the root of the current drive — for a service account, which is neither
+#     where setup mirrors the shim nor a path anything can read.
+#
+# One row may use serverName: rea in a profile. To pin a different launch
+# command on this machine, override `mcp-rea` from the profile's own
+# cordis.patch.yml (id-targeted config override) — that file is never published.
+
+- insert:
+    - id: mcp-rea
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: rea
+        transport: stdio
+        command: !!js process.execPath
+        args:
+          # DOUBLE-QUOTED on purpose. A bare scalar containing "? " and ": " is not
+          # one scalar at all: YAML reads `? a : b` as an explicit key/value pair,
+          # so js-yaml hands the loader a mapping instead of an expression node and
+          # args[0] becomes an object the launcher cannot use. Quoting makes the
+          # scalar unambiguous; the JS string literals inside use single quotes so
+          # they cannot collide with the YAML ones.
+          - !!js "(process.env.DSH_HOME && process.env.DSH_HOME.trim() !== '' ? process.env.DSH_HOME : (process.env.USERPROFILE || ((process.env.HOMEDRIVE || '') + (process.env.HOMEPATH || '')) || process.env.HOME || '') + '/.dsh') + '/plugins/rea-bundle/bin/rea-shim.mjs'"
+          - mcp
+        env:
+          # Only meaningful when the harness itself runs on Electron; harmless
+          # for a plain Node host. Explicit is better than relying on this
+          # variable happening to survive the child-env scrub.
+          ELECTRON_RUN_AS_NODE: '1'
+        failOnStartupError: false
+
+    # The Web GUI's one-shot setup guide. This row loads only the package entry
+    # (index.mjs), which serves a read-only GET /dsh-plugin-rea/guide-state and
+    # mounts nothing when the host has no webServer. It does not launch REA, does
+    # not provision, and never runs setup for the user — the guide only reports
+    # that the recorded bundle does not match the pin this package ships.
+    - id: rea-guide
+      name: 'dsh-plugin-rea'

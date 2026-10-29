@@ -1,0 +1,253 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    # The shim's launch decision reads this machine's REA. No runner has one, so
+    # the default `auto` would happen to take the bundle path today — pin it so
+    # that stays true if an image ever ships REA.
+    env:
+      REA_BUNDLE_LAUNCH: bundle
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Bundle manifest sanity
+        run: |
+          node -e "
+            const p = require('./package.json');
+            const fail = (m) => { console.error('FAIL: ' + m); process.exit(1) };
+            if (!p.dsh || !p.dsh.bundle || !p.dsh.bundle.patch) fail('package.json is missing dsh.bundle.patch');
+            if (p.private) fail('package.json must not be private to be publishable');
+            for (const f of ['cordis.patch.yml', 'index.mjs', 'README.md', 'LICENSE', 'check-updates.ps1']) {
+              if (!p.files.includes(f)) fail('files[] must ship ' + f);
+            }
+            if (!require('fs').existsSync(p.dsh.bundle.patch)) fail('dsh.bundle.patch target does not exist');
+            // The market's update path rolls a build back when package.json points
+            // at no existing entry (dshmarket's hasLoadableEntry); this package
+            // shipped no main at all until 2.0.5, so every update of a healthy
+            // profile failed with "updated build has no loadable entry".
+            if (typeof p.main !== 'string') fail('package.json must declare main');
+            if (!require('fs').existsSync(p.main)) fail('main points at no shipped file: ' + p.main);
+            // engines.dsh is what the market reads to say "compatible" instead of
+            // "unknown"; without it the plugin is reported as undeclared.
+            if (!p.engines || typeof p.engines.dsh !== 'string') fail('package.json must declare engines.dsh');
+            console.log('manifest ok');
+          "
+
+      - name: Declared DSH range covers every released host
+        # A wrong range is silent on both sides: unparseable reads as "undeclared"
+        # and a drifted floor drops hosts the README still lists.
+        run: node scripts/host-compat.mjs
+
+      - name: The READMEs quote the declared DSH range verbatim
+        # The same comparison verify-branch.ps1 makes locally. Without it here, a
+        # stale quote survives every CI signal: the JSON, host-compat and the
+        # audit all agree while the sentence a human reads names another ceiling
+        # (that is how `<0.3.0` outlived the move to `<0.3.0-0`).
+        run: |
+          node -e "
+            const p = require('./package.json');
+            const { readFileSync } = require('fs');
+            const fail = (m) => { console.error('FAIL: ' + m); process.exit(1) };
+            for (const doc of ['README.md', 'README.zh-CN.md']) {
+              const text = readFileSync(doc, 'utf8');
+              if (!text.includes(p.engines.dsh)) fail(doc + ' does not quote engines.dsh (' + p.engines.dsh + ')');
+              // The pin example is copy-pasteable: it must name the version this
+              // tree publishes, or the reader gets a ref that does not exist.
+              if (!text.includes('dsh-plugin-rea#v' + p.version)) fail(doc + ' does not pin dsh-plugin-rea#v' + p.version);
+            }
+            console.log('readme range ok');
+          "
+
+      - name: Both JSON readers tolerate a BOM
+        # verify-branch.ps1 runs the same check locally. bin/rea-shim.mjs and
+        # scripts/setup.mjs read the same mirror.json/bundle.json, so a strip on
+        # one side only makes the same file say "there is a checkout" to the shim
+        # and "there is none" to setup — which shipped once: setup re-mirrored the
+        # previous manifest. A bare JSON.parse(readFileSync(...)) is that bug.
+        run: |
+          node - <<'JS'
+          const { readFileSync } = require('node:fs');
+          const blind = [];
+          for (const file of ['bin/rea-shim.mjs', 'scripts/setup.mjs']) {
+            const text = readFileSync(file, 'utf8');
+            for (const m of text.matchAll(/JSON\.parse\(\s*readFileSync\(/g)) {
+              // readJson() itself is the strip; anything else must not parse a file raw.
+              if (!/replace\(/.test(text.slice(m.index, m.index + 200))) {
+                blind.push(file + ':' + text.slice(0, m.index).split('\n').length);
+              }
+            }
+            if (!text.includes('replace(/^\\uFEFF/')) blind.push(file + ': no U+FEFF strip');
+          }
+          if (blind.length) {
+            console.error('FAIL: BOM-blind JSON read at ' + blind.join(', '));
+            process.exit(1);
+          }
+          console.log('bom-blind reads: none');
+          JS
+
+      - name: JSON files parse
+        run: |
+          node -e "
+            for (const f of ['package.json', 'screenshots.json']) {
+              JSON.parse(require('fs').readFileSync(f, 'utf8'));
+              console.log('json ok:', f);
+            }
+          "
+
+      - name: The npm payload ships every market-facing file
+        run: |
+          # Regression guard for files[]: the market reads screenshots.json and the
+          # images next to package.json — none of that is worth anything if npm pack
+          # drops it.
+          node -e "
+            const { execSync } = require('child_process');
+            const meta = JSON.parse(execSync('npm pack --dry-run --json', { encoding: 'utf8' }))[0];
+            const files = meta.files.map((f) => f.path);
+            const need = [
+              'cordis.patch.yml', 'index.mjs', 'README.md', 'README.zh-CN.md', 'LICENSE', 'CHANGELOG.md', 'check-updates.ps1',
+              'screenshots.json', 'assets/screenshot-1.png', 'assets/screenshot-2.png',
+            ];
+            const missing = need.filter((f) => !files.includes(f));
+            if (missing.length) {
+              console.error('FAIL: the npm payload is missing ' + missing.join(', '));
+              process.exit(1);
+            }
+            console.log('npm payload ok: ' + files.length + ' files, all market-facing files included');
+          "
+
+      - name: YAML files parse
+        run: |
+          python3 -m pip install --quiet --disable-pip-version-check pyyaml
+          python3 - <<'PY'
+          import glob, yaml
+          # Every shipped row carries a `!!js` tag whose scalar the DSH loader
+          # evaluates at runtime. safe_load knows nothing about it and rejects the
+          # file this repository exists to ship, so register a scalar passthrough:
+          # indentation, quoting and structure are still validated, which is what
+          # this step is for.
+          yaml.SafeLoader.add_constructor(
+              'tag:yaml.org,2002:js',
+              lambda loader, node: loader.construct_scalar(node),
+          )
+          files = ['cordis.patch.yml', 'docs/marketplace-entry.yml'] + sorted(glob.glob('.github/workflows/*.yml'))
+          for f in files:
+              with open(f, encoding='utf-8') as fh:
+                  yaml.safe_load(fh)
+              print('yaml ok:', f)
+          PY
+
+      - name: The shipped patches stay machine-independent
+        run: |
+          set -e
+          # The row DSH loads may carry no real machine path; `<placeholders in angle
+          # brackets>` are the intended form.
+          targets=$(printf '%s\n' cordis.patch.yml)
+          if grep -nE '[A-Za-z]:\\' $targets; then
+            echo "FAIL: a shipped patch contains an absolute Windows path"
+            exit 1
+          fi
+          if grep -nE '/(home|Users)/[A-Za-z0-9._-]+' $targets; then
+            echo "FAIL: a shipped patch contains an absolute POSIX home path"
+            exit 1
+          fi
+          echo "patches ok: no machine-specific path"
+
+      - name: The row keeps its contract
+        run: |
+          python3 - <<'PY'
+          import sys, yaml
+          # The row carries `!!js` scalars, which the harness evaluates at load
+          # time. Register a passthrough so this step can inspect the structure.
+          yaml.SafeLoader.add_constructor(
+              'tag:yaml.org,2002:js',
+              lambda loader, node: loader.construct_scalar(node),
+          )
+          doc = yaml.safe_load(open('cordis.patch.yml', encoding='utf-8'))
+          row = doc[0]['insert'][0]
+          assert row['id'] == 'mcp-rea', row
+          assert row['name'] == '@deepseek-ai/dsh-mcp-client', row
+          cfg = row['config']
+          assert cfg['serverName'] == 'rea', cfg
+          assert cfg['transport'] == 'stdio', cfg
+          assert 'command' in cfg and 'args' in cfg, cfg
+          # A bare `? a : b` scalar is read as an explicit key/value pair, so the
+          # loader receives a mapping and the row cannot launch. Keep args[0] a
+          # scalar: this is the exact shape that shipped broken once.
+          for i, arg in enumerate(cfg['args']):
+              assert isinstance(arg, str), f'args[{i}] is not a scalar: {arg!r} — quote the !!js scalar'
+          print('row ok:', cfg['command'], cfg['args'])
+          PY
+
+      - name: The harness's own dialect still parses the row
+        run: |
+          # The steps above use pyyaml; this one loads the row through the same
+          # library the harness uses (js-yaml) with its own !!js type, so a shape
+          # that only pyyaml tolerates cannot ship.
+          npm install --no-save --silent --no-audit --no-fund js-yaml@4
+          node - <<'JS'
+          const { readFileSync } = require('node:fs');
+          const yaml = require('js-yaml');
+          const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {
+            kind: 'scalar',
+            resolve: (data) => typeof data === 'string',
+            construct: (data) => ({ __jsExpr: data }),
+          });
+          const doc = yaml.load(readFileSync('cordis.patch.yml', 'utf8'), { schema: yaml.JSON_SCHEMA.extend([JsExpr]) });
+          const cfg = doc[0].insert[0].config;
+          const args = cfg.args;
+          if (typeof cfg.command !== 'object' || typeof cfg.command.__jsExpr !== 'string') throw new Error('command is not an expression node');
+          if (typeof args[0] !== 'object' || typeof args[0].__jsExpr !== 'string') {
+            throw new Error(`args[0] is not an expression node: ${JSON.stringify(args[0])}`);
+          }
+          const path = new Function('process', `return (${args[0].__jsExpr})`)({ env: { USERPROFILE: 'C:\\Users\\probe', HOME: '/home/probe' } });
+          if (!path.endsWith('/.dsh/plugins/rea-bundle/bin/rea-shim.mjs')) throw new Error(`unset DSH_HOME resolves to ${path}`);
+          console.log('dialect ok:', cfg.command.__jsExpr, '->', path);
+          JS
+
+      - name: Unit tests for the pure logic
+        # Probe-token substitution and root stripping broke silently during
+        # development; these tests pin them. They are platform-sensitive by
+        # design, which is exactly why they must run on Linux too.
+        run: npm run bundle:test
+
+      - name: Bundle manifest audit
+        # Checksum coverage, unresolved tokens, duplicate JSON keys, and the
+        # patch-wiring agreement between the row, the shim and setup.mjs.
+        run: npm run bundle:audit
+
+  windows:
+    # The PowerShell download route, the tar/Expand-Archive extraction path and
+    # scripts/rea-bundle-bootstrap.ps1 are Windows-only code, and an ubuntu-only
+    # matrix never executed any of them — they were verified by hand, if at all.
+    # The tests are platform-sensitive on purpose: each platform exercises the
+    # download route it actually chooses.
+    runs-on: windows-latest
+    # Same pin as the ubuntu job: the launch decision must not depend on what the
+    # runner image happens to have installed.
+    env:
+      REA_BUNDLE_LAUNCH: bundle
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Unit tests for the pure logic (Windows)
+        run: npm run bundle:test
+
+      - name: Bundle manifest audit (Windows)
+        run: npm run bundle:audit

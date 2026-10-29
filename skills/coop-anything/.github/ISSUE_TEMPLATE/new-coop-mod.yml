@@ -1,0 +1,26 @@
+name: New co-op project spotted
+description: Tell us about a co-op mod, fork or port that is missing from the directory
+labels: [directory]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        💬 **Please join our [Discord](https://discord.gg/EXGB49R82t)!** Chat with other co-op modders, follow projects, and get your own Dev role and topic for your mod.
+  - type: input
+    id: game
+    attributes: { label: Game, placeholder: "Deus Ex (2000)" }
+    validations: { required: true }
+  - type: input
+    id: url
+    attributes: { label: Project link, placeholder: "https://..." }
+    validations: { required: true }
+  - type: textarea
+    id: scope
+    attributes:
+      label: What is actually shared?
+      description: Story and quests, enemies, world state, items. Say what you saw, not what the page promises.
+  - type: dropdown
+    id: qa
+    attributes:
+      label: Have you played it in co-op?
+      options: ["No", "Yes, a bit", "Yes, a full playthrough", "I ran automated tests"]

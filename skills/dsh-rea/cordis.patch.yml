@@ -1,0 +1,20 @@
+# dsh-rea bundle patch.
+#
+# Applied after @deepseek-ai/dsh-base, which already mounts the skill registry
+# (ctx.skills) and the tool registry (ctx.tools). This entry mounts the REA
+# plugin for every session of the profile.
+#
+# `config` is optional; every field below shows its default. Override only what
+# this machine needs — the defaults discover the sibling `rea` checkout
+# automatically (`<this plugin>/../../rea`) and fall back to a `rea` on PATH or
+# to `npx -y rea-agents@<repo version>`.
+- insert:
+    - id: dsh-rea
+      name: dsh-rea
+      # config:
+      #   repoPath: ''                 # explicit REA checkout; default: env DSH_REA_REPO, then <plugin>/../../rea, then <plugin>/../rea
+      #   cliPath: ''                  # explicit CLI entry (.mjs/.js) or executable; default: env DSH_REA_CLI
+      #   skillsDirs: []              # extra skill roots ahead of the packaged skills/
+      #   npxVersion: ''               # '' = the checkout's package version, else a pinned version or 'latest'
+      #   timeoutMs: 600000            # per-invocation timeout for the rea tool
+      #   maxOutputBytes: 262144       # inline stdout limit; larger output spills to a file and returns its path

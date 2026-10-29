@@ -1,0 +1,28 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  node-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # No install step: the plugin has no dependencies.
+      # DSH_REA_TEST_SKIP_LIVE keeps CI off the network: without it the suite
+      # would try `npx rea-agents` (the last rung of the runtime ladder) and
+      # depend on a download, an engine check and a registry being reachable.
+      - run: node --test
+        env:
+          DSH_REA_TEST_SKIP_LIVE: '1'

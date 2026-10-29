@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "package": "rea-dsh-plugin",
+  "upstream": "",
+  "syncedTag": "6.5.0",
+  "syncedCommit": null,
+  "syncedAt": "2026-10-15T07:16:12+00:00",
+  "overlayVersion": 1,
+  "skills": {
+    "rea-dsh": {
+      "files": 1,
+      "sha256": "51a5299e2e03fdbadfe0c657b7c2b985b7537e5205bb84858440d323e7655fa0"
+    },
+    "reverse-engineer-anything": {
+      "files": 7,
+      "sha256": "fcb2175eb4e8dc2272b7bf7a2ad87688b2f75e4b2802f097a710d7333b385d49"
+    }
+  }
+}

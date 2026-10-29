@@ -1,0 +1,52 @@
+{
+  "name": "dsh-rea",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness bundle: registers the REA reverse-engineering skill plus the `rea` and `rea_doctor` tools, so every session can drive the local REA CLI (rea-agents) for binary, Electron/ASAR, Android, firmware and archive analysis.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "skills",
+    "cordis.patch.yml",
+    "README.md",
+    "THIRD-PARTY.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "rea",
+    "rea-agents",
+    "reverse-engineering",
+    "binary-analysis",
+    "decompiler",
+    "asar",
+    "firmware"
+  ],
+  "license": "MIT",
+  "author": "zhaofeng130",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhaofeng130/dsh-rea.git"
+  },
+  "homepage": "https://github.com/zhaofeng130/dsh-rea#readme",
+  "bugs": {
+    "url": "https://github.com/zhaofeng130/dsh-rea/issues"
+  }
+}
